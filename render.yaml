@@ -1,0 +1,89 @@
+services:
+  # -----------------------------------------------------
+  # 1. API Server (Node.js/Express)
+  # -----------------------------------------------------
+  - type: web
+    name: codepro-api
+    env: node
+    region: ohio
+    buildCommand: "cd server && npm install && npm run build"
+    startCommand: "cd server && npm start"
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: codepro-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: codepro-redis
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: NODE_ENV
+        value: production
+      # NOTE: You MUST manually add RAPIDAPI_KEY and RAPIDAPI_HOST in the Render Dashboard 
+      # under this service's Environment Variables, as they are secret keys.
+
+  # -----------------------------------------------------
+  # 2. Background Worker (BullMQ)
+  # -----------------------------------------------------
+  - type: worker
+    name: codepro-worker
+    env: node
+    region: ohio
+    buildCommand: "cd server && npm install && npm run build"
+    startCommand: "cd server && npm run worker"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: codepro-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: codepro-redis
+          property: connectionString
+      - key: NODE_ENV
+        value: production
+      # NOTE: You MUST manually add RAPIDAPI_KEY and RAPIDAPI_HOST in the Render Dashboard 
+      # under this service's Environment Variables, as they are secret keys.
+
+  # -----------------------------------------------------
+  # 3. Frontend Web App (Vite/React)
+  # -----------------------------------------------------
+  - type: web
+    name: codepro-web
+    env: static
+    region: ohio
+    buildCommand: "cd client && npm install && npm run build"
+    staticPublishPath: "./client/dist"
+    envVars:
+      - key: VITE_API_BASE
+        # This will automatically point to the codepro-api service deployed above
+        fromService:
+          type: web
+          name: codepro-api
+          property: url
+
+  # -----------------------------------------------------
+  # 4. Redis Cache & Message Queue
+  # -----------------------------------------------------
+  - type: redis
+    name: codepro-redis
+    region: ohio
+    ipAllowList: [] # only allow internal connections
+    plan: free
+    maxmemoryPolicy: noeviction
+
+databases:
+  # -----------------------------------------------------
+  # 5. PostgreSQL Database
+  # -----------------------------------------------------
+  - name: codepro-db
+    region: ohio
+    databaseName: codepro
+    user: codepro_user
+    plan: free

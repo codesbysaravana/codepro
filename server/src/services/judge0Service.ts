@@ -31,6 +31,21 @@ export const submitToJudge0 = async (
   language_id: number | string,
   stdin = ""
 ): Promise<string> => {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  console.log(`[JUDGE0] Using URL: ${JUDGE0_URL}`);
+  console.log(`[JUDGE0] Key loaded? ${!!process.env.RAPIDAPI_KEY}`);
+  console.log(`[JUDGE0] Host loaded? ${!!process.env.RAPIDAPI_HOST}`);
+
+  if (process.env.RAPIDAPI_KEY && process.env.RAPIDAPI_HOST) {
+    headers["x-rapidapi-key"] = process.env.RAPIDAPI_KEY;
+    headers["x-rapidapi-host"] = process.env.RAPIDAPI_HOST;
+  }
+
+  console.log(`[JUDGE0] Headers being sent:`, JSON.stringify(headers));
+
   const response = await axios.post(
     `${JUDGE0_URL}/submissions`,
     {
@@ -44,6 +59,7 @@ export const submitToJudge0 = async (
         base64_encoded: false,
         fields: "token",
       },
+      headers,
     }
   );
 
@@ -58,6 +74,13 @@ export const submitToJudge0 = async (
 export const getSubmissionStatus = async (
   token: string
 ): Promise<Judge0Response> => {
+  const headers: Record<string, string> = {};
+
+  if (process.env.RAPIDAPI_KEY && process.env.RAPIDAPI_HOST) {
+    headers["x-rapidapi-key"] = process.env.RAPIDAPI_KEY;
+    headers["x-rapidapi-host"] = process.env.RAPIDAPI_HOST;
+  }
+
   const response = await axios.get(
     `${JUDGE0_URL}/submissions/${token}`,
     {
@@ -65,6 +88,7 @@ export const getSubmissionStatus = async (
         base64_encoded: false,
         fields: "*",
       },
+      headers,
     }
   );
 
@@ -77,8 +101,16 @@ export const getSubmissionStatus = async (
 
 // Get available languages from Judge0
 export const getLanguages = async (): Promise<unknown> => {
+  const headers: Record<string, string> = {};
+
+  if (process.env.RAPIDAPI_KEY && process.env.RAPIDAPI_HOST) {
+    headers["x-rapidapi-key"] = process.env.RAPIDAPI_KEY;
+    headers["x-rapidapi-host"] = process.env.RAPIDAPI_HOST;
+  }
+
   const response = await axios.get(`${JUDGE0_URL}/languages`, {
     params: { base64_encoded: false },
+    headers,
   });
 
   return response.data;

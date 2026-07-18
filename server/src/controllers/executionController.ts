@@ -4,7 +4,7 @@ import { type Request, type Response } from "express";
 import { jobStore } from "../utils/storage.js";
 import { JOB_STATUS, type JobStatus } from "../config/constants.js";
 import { executionQueue } from "../config/queue.js";
-import problemsData from "../data/problems.json" with { type: "json" };
+import { pool } from "../db/db.js";
 
 
 /* ------------------------------------------------------------------ */
@@ -38,8 +38,10 @@ interface JobRecord {
 /* POST /run                                                          */
 /* ------------------------------------------------------------------ */
 
+import { AuthRequest } from "../middlewares/authMiddleware.js";
+
 export const runCode = async (
-  req: Request<{}, {}, RunCodeBody>,
+  req: AuthRequest,
   res: Response
 ): Promise<void> => {
   const {
@@ -48,8 +50,9 @@ export const runCode = async (
     languageId,
     problemId,
     mode = "run",
-    userId = "anonymous",
-  } = req.body;
+  } = req.body as RunCodeBody;
+
+  const userId = req.user?.userId ? String(req.user.userId) : "anonymous";
 
   const resolvedLanguageId = languageId ?? language_id;
   const normalizedMode: "run" | "submit" =
@@ -70,18 +73,30 @@ export const runCode = async (
     return;
   }
 
-  const problem = problemsData.problems.find(
-    (p: any) =>
-      p.problem_id === problemId || String(p.id) === String(problemId)
+  const problemResult = await pool.query(
+    "SELECT id, wrapper_code FROM problems WHERE problem_id = $1 OR id::text = $1 LIMIT 1",
+    [String(problemId)]
   );
 
-  if (!problem) {
+  if (problemResult.rowCount === 0) {
     res.status(404).json({ error: "Problem not found" });
     return;
   }
 
-  const sampleTestCases = problem.testCases?.sample ?? [];
-  const hiddenTestCases = problem.testCases?.hidden ?? [];
+  const internalProblemId = problemResult.rows[0].id;
+
+  const testCasesResult = await pool.query(
+    "SELECT type, input, expected_output FROM test_cases WHERE problem_id = $1 ORDER BY order_index ASC",
+    [internalProblemId]
+  );
+
+  const sampleTestCases = testCasesResult.rows
+    .filter(tc => tc.type === 'sample')
+    .map(tc => ({ input: tc.input, expected_output: tc.expected_output }));
+
+  const hiddenTestCases = testCasesResult.rows
+    .filter(tc => tc.type === 'hidden')
+    .map(tc => ({ input: tc.input, expected_output: tc.expected_output }));
 
   const allTestCases =
     normalizedMode === "submit"
@@ -96,6 +111,16 @@ export const runCode = async (
   console.log("Test Cases:", allTestCases.length);
   console.log("Sample Cases:", sampleTestCases.length);
   console.log("Hidden Cases:", hiddenTestCases.length);
+
+  const wrapperCodeObj = problemResult.rows[0].wrapper_code;
+  let finalCode = code;
+
+  if (wrapperCodeObj && typeof wrapperCodeObj === 'object') {
+    const wrapperTemplate = wrapperCodeObj[String(resolvedLanguageId)];
+    if (wrapperTemplate) {
+      finalCode = wrapperTemplate.replace("// USER_CODE_HERE", code);
+    }
+  }
 
   const jobId = uuidv4();
 
@@ -117,7 +142,7 @@ export const runCode = async (
 
   await executionQueue.add("execute", {
     jobId,
-    code,
+    code: finalCode,
     language_id: resolvedLanguageId,
     userId,
     allTestCases,
@@ -172,7 +197,7 @@ export const getJobStatus = async (
     res.json({
       job_id: jobId,
       status: job.status,
-      result: job.result ? JSON.parse(job.result) : null,
+      result: job.result || null,
     });
     return;
   }

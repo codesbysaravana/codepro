@@ -41,6 +41,11 @@ export interface Submission {
   memory: string;
 }
 
+export interface User {
+  id: number;
+  email: string;
+}
+
 // ── Store state + actions ───────────────────────────────────────────────────
 
 interface AppState {
@@ -72,6 +77,10 @@ interface AppState {
   editorPanelHeight: number;
   isResizingHorizontal: boolean;
   isResizingVertical: boolean;
+
+  // Auth
+  token: string | null;
+  user: User | null;
 }
 
 interface AppActions {
@@ -94,6 +103,9 @@ interface AppActions {
   setEditorPanelHeight: (height: number) => void;
   setIsResizingHorizontal: (resizing: boolean) => void;
   setIsResizingVertical: (resizing: boolean) => void;
+
+  setAuth: (token: string, user: User) => void;
+  logout: () => void;
 }
 
 export const useAppStore = create<AppState & AppActions>((set) => ({
@@ -115,6 +127,10 @@ export const useAppStore = create<AppState & AppActions>((set) => ({
   editorPanelHeight: 62,
   isResizingHorizontal: false,
   isResizingVertical: false,
+  token: localStorage.getItem("codepro_token"),
+  user: localStorage.getItem("codepro_user") 
+    ? JSON.parse(localStorage.getItem("codepro_user")!) 
+    : null,
 
   // ── Actions (mirror the original useState setters) ────────────────────────
   setCurrentProblemId: (id) => set({ currentProblemId: id }),
@@ -139,4 +155,16 @@ export const useAppStore = create<AppState & AppActions>((set) => ({
   setIsResizingHorizontal: (resizing) =>
     set({ isResizingHorizontal: resizing }),
   setIsResizingVertical: (resizing) => set({ isResizingVertical: resizing }),
+  
+  setAuth: (token, user) => {
+    localStorage.setItem("codepro_token", token);
+    localStorage.setItem("codepro_user", JSON.stringify(user));
+    set({ token, user });
+  },
+  
+  logout: () => {
+    localStorage.removeItem("codepro_token");
+    localStorage.removeItem("codepro_user");
+    set({ token: null, user: null });
+  },
 }));

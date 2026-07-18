@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express, { type Application } from "express";
 import cors from "cors";
 
@@ -9,6 +10,8 @@ import { redis } from "./config/queue.js";
 import executionRoutes from "./routes/executionRoutes.js";
 import sseRoutes from "./routes/sseRoutes.js";
 import systemRoutes from "./routes/systemRoutes.js";
+import problemRoutes from "./routes/problemRoutes.js";
+import authRoutes from "./routes/authRoutes.js";
 
 // DB 
 import { pool } from "./db/db.js";
@@ -24,6 +27,8 @@ app.get("/", (req, res) => { res.send("Welcome to etherCode execEngine"); })
 app.use("/", executionRoutes);
 app.use("/", sseRoutes);
 app.use("/", systemRoutes);
+app.use("/", problemRoutes);
+app.use("/", authRoutes);
 
 app.get("/db", async (_req, res) => {
   const result = await pool.query("SELECT 1");

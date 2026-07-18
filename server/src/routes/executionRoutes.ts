@@ -3,11 +3,12 @@ import {
   runCode,
   getJobStatus,
 } from "../controllers/executionController.js";
+import { requireAuth } from "../middlewares/authMiddleware.js";
 
 const router = Router();
 
 // POST /run - Submit code for execution
-router.post("/run", runCode);
+router.post("/run", requireAuth, runCode);
 
 // GET /job/:jobId - Get job status and result
 router.get("/job/:jobId", getJobStatus);

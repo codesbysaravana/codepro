@@ -1,7 +1,11 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import Editor from "@monaco-editor/react";
-import "./App.css";
-import problemsData from "./problems.json";
+import "../App.css";
+import {
+  useAppStore,
+  type OutputResult,
+  type Submission,
+} from "../store/useAppStore";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000";
 const USER_ID = "user123";
@@ -26,7 +30,7 @@ interface TestCase {
 
 interface Problem {
   id: number;
-  problem_id?: number;
+  problem_id?: number | string;
   title: string;
   difficulty: string;
   description: string;
@@ -35,6 +39,7 @@ interface Problem {
   testCases: {
     sample: TestCase[];
   };
+  starter_code?: Record<string, string>;
 }
 
 interface CodeTemplates {
@@ -49,45 +54,6 @@ interface ProblemsData {
   codeTemplates: CodeTemplates;
 }
 
-interface TestResult {
-  testCase: number;
-  input: string;
-  expected: string;
-  actual: string;
-  passed: boolean;
-  status?: string;
-  stderr?: string;
-  compile_output?: string;
-  time?: string;
-  memory?: string;
-}
-
-interface OutputResult {
-  error?: string;
-  stdout?: string;
-  stderr?: string;
-  compile_output?: string;
-  message?: string;
-  status?: string;
-  time?: string;
-  memory?: string;
-  verdict?: string;
-  testResults?: TestResult[];
-  sampleTestResults?: TestResult[];
-  passedTests?: number;
-  totalTests?: number;
-  samplePassedTests?: number;
-  sampleTotalTests?: number;
-}
-
-interface Submission {
-  time: string;
-  verdict: string;
-  language: string;
-  runtime: string;
-  memory: string;
-}
-
 interface JobCompleteData {
   jobId: string;
   error?: string;
@@ -95,59 +61,87 @@ interface JobCompleteData {
   result?: OutputResult;
 }
 
-function App() {
-  const [problems] = useState<Problem[]>((problemsData as ProblemsData).problems);
-  const [codeTemplates] = useState<CodeTemplates>((problemsData as ProblemsData).codeTemplates);
-  const [currentProblemId, setCurrentProblemId] = useState<number>(1);
-  const [showSidebar, setShowSidebar] = useState<boolean>(false);
-  const [languageId, setLanguageId] = useState<number>(71);
-  const [code, setCode] = useState<string>("");
-  const [output, setOutput] = useState<OutputResult | null>(null);
-  const [isRunning, setIsRunning] = useState<boolean>(false);
-  const [testResults, setTestResults] = useState<TestResult[]>([]);
-  const [activeTab, setActiveTab] = useState<string>("description");
-  const [outputTab, setOutputTab] = useState<string>("testcase");
-  const [selectedTestCase, setSelectedTestCase] = useState<number>(0);
-  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
-  const [eventSource, setEventSource] = useState<EventSource | null>(null);
-  const [lastMode, setLastMode] = useState<string>("run");
-  const [submissions, setSubmissions] = useState<Submission[]>([]);
-  const [leftPanelWidth, setLeftPanelWidth] = useState<number>(50);
-  const [editorPanelHeight, setEditorPanelHeight] = useState<number>(62);
-  const [isResizingHorizontal, setIsResizingHorizontal] = useState<boolean>(false);
-  const [isResizingVertical, setIsResizingVertical] = useState<boolean>(false);
+function Workspace() {
+  const [problemsDataState, setProblemsDataState] = useState<ProblemsData | null>(null);
+  const [isLoadingProblems, setIsLoadingProblems] = useState(true);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/problems`)
+      .then(res => res.json())
+      .then(data => {
+        setProblemsDataState(data);
+        setIsLoadingProblems(false);
+      })
+      .catch(err => {
+        console.error("Failed to load problems:", err);
+        setIsLoadingProblems(false);
+      });
+  }, []);
+
+  const problems: Problem[] = problemsDataState?.problems || [];
+  const codeTemplates: CodeTemplates = useMemo(() => problemsDataState?.codeTemplates || {}, [problemsDataState?.codeTemplates]);
+  // ── Zustand store ─────────────────────────────────────────────────────────
+  const {
+    currentProblemId, setCurrentProblemId,
+    showSidebar, setShowSidebar,
+    languageId, setLanguageId,
+    code, setCode,
+    output, setOutput,
+    isRunning, setIsRunning,
+    testResults, setTestResults,
+    activeTab, setActiveTab,
+    outputTab, setOutputTab,
+    selectedTestCase, setSelectedTestCase,
+    setCurrentJobId,
+    lastMode, setLastMode,
+    submissions, setSubmissions,
+    leftPanelWidth, setLeftPanelWidth,
+    editorPanelHeight, setEditorPanelHeight,
+    isResizingHorizontal, setIsResizingHorizontal,
+    isResizingVertical, setIsResizingVertical,
+    token
+  } = useAppStore();
+
+  // ── Refs (non-serializable / DOM) ─────────────────────────────────────────
+  const eventSourceRef = useRef<EventSource | null>(null);
   const rightPanelRef = useRef<HTMLDivElement>(null);
 
-  const currentProblem: Problem = problems.find(p => p.id === currentProblemId) || problems[0];
+  const currentProblem: Problem | undefined = problems.find(p => p.id === currentProblemId) || problems[0];
 
-  const getRuntimePercent = (timeSeconds: string | number): number => {
-    const seconds = Number(timeSeconds);
-    if (!Number.isFinite(seconds) || seconds <= 0) return 50;
-    const ms = seconds * 1000;
-    const baseline = 1000; // 1s baseline for visualization
-    const ratio = baseline / ms;
-    const raw = 20 + ratio * 60; // 20-80 range
-    return Math.max(10, Math.min(100, raw));
-  };
 
+  /*   const getRuntimePercent = (timeSeconds: string | number): number => {
+      const seconds = Number(timeSeconds);
+      if (!Number.isFinite(seconds) || seconds <= 0) return 50;
+      const ms = seconds * 1000;
+      const baseline = 1000; // 1s baseline for visualization
+      const ratio = baseline / ms;
+      const raw = 20 + ratio * 60; // 20-80 range
+      return Math.max(10, Math.min(100, raw));
+    };
+   */
   // Load starter code when problem or language changes
   useEffect(() => {
-    const langKey = LANGUAGE_MAP[languageId] as keyof CodeTemplates;
-    if (codeTemplates?.[langKey]) {
-      setCode(codeTemplates[langKey] || "");
+    const starterCode = currentProblem?.starter_code?.[languageId.toString()];
+    if (starterCode) {
+      setCode(starterCode);
+    } else {
+      const langKey = LANGUAGE_MAP[languageId] as keyof CodeTemplates;
+      if (codeTemplates?.[langKey]) {
+        setCode(codeTemplates[langKey] || "");
+      }
     }
     setOutput(null);
     setTestResults([]);
     setSelectedTestCase(0);
-  }, [currentProblemId, languageId, codeTemplates]);
+  }, [currentProblemId, languageId, codeTemplates, currentProblem?.starter_code, setCode, setOutput, setTestResults, setSelectedTestCase]);
 
   // Setup job-scoped SSE listener
   const setupSSEListener = (jobId: string) => {
     console.log(`[SSE-SETUP] Opening SSE connection for job: ${jobId}`);
-    
+
     // Close any previous SSE connection
-    if (eventSource) {
-      eventSource.close();
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
       console.log(`[SSE-CLEANUP] Closed previous SSE connection`);
     }
 
@@ -162,7 +156,7 @@ function App() {
       console.log(`[SSE] Received job-complete for job: ${jobId}`);
       try {
         const data: JobCompleteData = JSON.parse(e.data);
-        
+
         // Verify this result belongs to the current job
         if (data.jobId === jobId) {
           if (data.error) {
@@ -178,11 +172,11 @@ function App() {
           setOutput(data.result || null);
           setIsRunning(false);
           setOutputTab("result");
-          
+
           // If backend returned testResults (from while-loop execution)
           // BUT: Don't set testResults if there's a compile or runtime error
           const hasError = data.result?.compile_output || data.result?.stderr;
-          
+
           if (hasError) {
             console.log(`[SSE] Execution error detected, clearing testResults`);
             setTestResults([]);
@@ -211,11 +205,11 @@ function App() {
               setActiveTab("accepted");
             }
           }
-          
+
           // Close connection after receiving result (server will also close)
           setTimeout(() => {
             newEventSource.close();
-            setEventSource(null);
+            eventSourceRef.current = null;
             console.log(`[SSE] Closed connection after receiving result for job: ${jobId}`);
           }, 100);
         }
@@ -235,17 +229,17 @@ function App() {
         console.log(`[SSE] Connection closed (expected after result)`);
       }
       newEventSource.close();
-      setEventSource(null);
+      eventSourceRef.current = null;
     });
 
-    setEventSource(newEventSource);
+    eventSourceRef.current = newEventSource;
   };
 
   const compareResults = (result: OutputResult) => {
     const actual = (result.stdout || "").trim();
     const testCase = currentProblem.testCases.sample[selectedTestCase];
     const expected = testCase.expected_output.trim();
-    
+
     const passed = actual === expected;
     setTestResults([{
       testCase: selectedTestCase + 1,
@@ -264,19 +258,25 @@ function App() {
   // Cleanup SSE on unmount
   useEffect(() => {
     return () => {
-      if (eventSource) {
-        eventSource.close();
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
         console.log(`[SSE-CLEANUP] Closed SSE connection on unmount`);
       }
     };
-  }, [eventSource]);
+  }, []);
 
   const handleLanguageChange = (langId: string) => {
     const newLangId = Number(langId);
     setLanguageId(newLangId);
-    const langKey = LANGUAGE_MAP[newLangId] as keyof CodeTemplates;
-    if (codeTemplates?.[langKey]) {
-      setCode(codeTemplates[langKey] || "");
+    
+    const starterCode = currentProblem?.starter_code?.[newLangId.toString()];
+    if (starterCode) {
+      setCode(starterCode);
+    } else {
+      const langKey = LANGUAGE_MAP[newLangId] as keyof CodeTemplates;
+      if (codeTemplates?.[langKey]) {
+        setCode(codeTemplates[langKey] || "");
+      }
     }
   };
 
@@ -330,7 +330,97 @@ function App() {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [isResizingHorizontal, isResizingVertical]);
+  }, [isResizingHorizontal, isResizingVertical, setLeftPanelWidth, setEditorPanelHeight, setIsResizingHorizontal, setIsResizingVertical]);
+
+  const runCode = useCallback(async () => {
+    setIsRunning(true);
+    setOutput(null);
+    setTestResults([]);
+    setOutputTab("result");
+    setLastMode("run");
+
+    const sampleCases = currentProblem?.testCases?.sample || [];
+    console.log(`[RUN] Sending ${sampleCases.length} sample test cases to backend`);
+
+    try {
+      const res = await fetch(`${API_BASE}/run`, {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          code,
+          languageId,
+          problemId: currentProblem?.problem_id || currentProblem?.id,
+          mode: "run"
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setOutput({ error: data.error });
+        setIsRunning(false);
+        return;
+      }
+
+      // Got jobId from backend
+      const jobId = data.job_id;
+      console.log(`[RUN] Received jobId: ${jobId}, setting up SSE listener`);
+      setCurrentJobId(jobId);
+
+      // Setup SSE listener ONLY for this job
+      setupSSEListener(jobId);
+    } catch (err) {
+      console.error(`[RUN] Error:`, err);
+      setOutput({ error: (err as Error).message });
+      setIsRunning(false);
+    }
+  }, [code, languageId, currentProblem, setIsRunning, setOutput, setTestResults, setOutputTab, setLastMode, setCurrentJobId, setupSSEListener]);
+
+  const submitCode = useCallback(async () => {
+    setIsRunning(true);
+    setOutput(null);
+    setTestResults([]);
+    setOutputTab("result");
+    setLastMode("submit");
+    console.log(`[SUBMIT] Running hidden test cases on backend`);
+
+    try {
+      const res = await fetch(`${API_BASE}/run`, {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          code,
+          languageId,
+          problemId: currentProblem?.problem_id || currentProblem?.id,
+          mode: "submit"
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setOutput({ error: data.error });
+        setIsRunning(false);
+        return;
+      }
+
+      // Got jobId from backend
+      const jobId = data.job_id;
+      console.log(`[SUBMIT] Received jobId: ${jobId}, setting up SSE listener`);
+      setCurrentJobId(jobId);
+
+      // Setup SSE listener ONLY for this job
+      setupSSEListener(jobId);
+    } catch (err) {
+      console.error(`[SUBMIT] Error:`, err);
+      setOutput({ error: (err as Error).message });
+      setIsRunning(false);
+    }
+  }, [code, languageId, currentProblem, setIsRunning, setOutput, setTestResults, setOutputTab, setLastMode, setCurrentJobId, setupSSEListener]);
 
   // Keyboard shortcuts: Ctrl + ' to run, Ctrl + Enter to submit (like LeetCode)
   useEffect(() => {
@@ -343,7 +433,7 @@ function App() {
           runCode();
         }
       }
-      
+
       // Ctrl + Enter to submit code
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
         e.preventDefault();
@@ -359,93 +449,25 @@ function App() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isRunning, code, languageId, currentProblem]);
+  }, [isRunning, runCode, submitCode]);
 
-  const runCode = async () => {
-    setIsRunning(true);
-    setOutput(null);
-    setTestResults([]);
-    setOutputTab("result");
-    setLastMode("run");
 
-    const sampleCases = currentProblem.testCases?.sample || [];
-    console.log(`[RUN] Sending ${sampleCases.length} sample test cases to backend`);
-    
-    try {
-      const res = await fetch(`${API_BASE}/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          code,
-          languageId,
-          problemId: currentProblem.problem_id || currentProblem.id,
-          mode: "run",
-          userId: USER_ID
-        })
-      });
 
-      const data = await res.json();
-      if (!res.ok) {
-        setOutput({ error: data.error });
-        setIsRunning(false);
-        return;
-      }
+  if (isLoadingProblems) {
+    return (
+      <div style={{ display: 'flex', height: '100vh', justifyContent: 'center', alignItems: 'center', backgroundColor: '#1e1e1e', color: 'white' }}>
+        <h2>Loading Workspace...</h2>
+      </div>
+    );
+  }
 
-      // Got jobId from backend
-      const jobId = data.job_id;
-      console.log(`[RUN] Received jobId: ${jobId}, setting up SSE listener`);
-      setCurrentJobId(jobId);
-      
-      // Setup SSE listener ONLY for this job
-      setupSSEListener(jobId);
-    } catch (err) {
-      console.error(`[RUN] Error:`, err);
-      setOutput({ error: (err as Error).message });
-      setIsRunning(false);
-    }
-  };
-
-  const submitCode = async () => {
-    setIsRunning(true);
-    setOutput(null);
-    setTestResults([]);
-    setOutputTab("result");
-    setLastMode("submit");
-    console.log(`[SUBMIT] Running hidden test cases on backend`);
-    
-    try {
-      const res = await fetch(`${API_BASE}/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          code,
-          languageId,
-          problemId: currentProblem.problem_id || currentProblem.id,
-          mode: "submit",
-          userId: USER_ID
-        })
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        setOutput({ error: data.error });
-        setIsRunning(false);
-        return;
-      }
-
-      // Got jobId from backend
-      const jobId = data.job_id;
-      console.log(`[SUBMIT] Received jobId: ${jobId}, setting up SSE listener`);
-      setCurrentJobId(jobId);
-      
-      // Setup SSE listener ONLY for this job
-      setupSSEListener(jobId);
-    } catch (err) {
-      console.error(`[SUBMIT] Error:`, err);
-      setOutput({ error: (err as Error).message });
-      setIsRunning(false);
-    }
-  };
+  if (!currentProblem) {
+    return (
+      <div style={{ display: 'flex', height: '100vh', justifyContent: 'center', alignItems: 'center', backgroundColor: '#1e1e1e', color: 'white' }}>
+        <h2>No problems found in database</h2>
+      </div>
+    );
+  }
 
   return (
     <div className="leetcode-container">
@@ -600,11 +622,11 @@ function App() {
                           <linearGradient id="gaugeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
                             <stop offset="0%" stopColor={
                               Number(output.time || 0) < 0.5 ? "#00b8a3" :
-                              Number(output.time || 0) < 1.5 ? "#ffa116" : "#ef4444"
+                                Number(output.time || 0) < 1.5 ? "#ffa116" : "#ef4444"
                             } />
                             <stop offset="100%" stopColor={
                               Number(output.time || 0) < 0.5 ? "#00e5cc" :
-                              Number(output.time || 0) < 1.5 ? "#ffb84d" : "#ff6b6b"
+                                Number(output.time || 0) < 1.5 ? "#ffb84d" : "#ff6b6b"
                             } />
                           </linearGradient>
                         </defs>
@@ -646,10 +668,10 @@ function App() {
                               x: (i / Math.max(times.length - 1, 1)) * 280 + 10,
                               y: 50 - (t / maxTime) * 40
                             }));
-                            const pathData = points.map((p, i) => 
+                            const pathData = points.map((p, i) =>
                               `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`
                             ).join(' ');
-                            
+
                             return (
                               <>
                                 <path d={pathData} fill="none" stroke="#00b8a3" strokeWidth="2" />
@@ -748,249 +770,249 @@ function App() {
 
           {/* Test Case Section */}
           <div className="testcase-section" style={{ height: `${100 - editorPanelHeight}%` }}>
-          <div className="testcase-tabs">
-            <button
-              className={outputTab === "testcase" ? "tab active" : "tab"}
-              onClick={() => setOutputTab("testcase")}
-            >
-              Testcase
-            </button>
-            <button
-              className={outputTab === "result" ? "tab active" : "tab"}
-              onClick={() => setOutputTab("result")}
-            >
-              Test Result
-            </button>
-          </div>
+            <div className="testcase-tabs">
+              <button
+                className={outputTab === "testcase" ? "tab active" : "tab"}
+                onClick={() => setOutputTab("testcase")}
+              >
+                Testcase
+              </button>
+              <button
+                className={outputTab === "result" ? "tab active" : "tab"}
+                onClick={() => setOutputTab("result")}
+              >
+                Test Result
+              </button>
+            </div>
 
-          <div className="testcase-content">
-            {outputTab === "testcase" && (
-              <div className="testcase-selector">
-                <div className="case-buttons">
-                  {currentProblem.testCases.sample.map((_, i) => (
-                    <button
-                      key={i}
-                      className={selectedTestCase === i ? "case-btn active" : "case-btn"}
-                      onClick={() => setSelectedTestCase(i)}
-                    >
-                      Case {i + 1}
-                    </button>
-                  ))}
-                </div>
-                <div className="testcase-display">
-                  <div className="testcase-label">Input:</div>
-                  <pre className="testcase-input">
-                    {currentProblem.testCases.sample[selectedTestCase].input}
-                  </pre>
-                  <div className="testcase-label">Expected Output:</div>
-                  <pre className="testcase-input">
-                    {currentProblem.testCases.sample[selectedTestCase].expected_output}
-                  </pre>
-                </div>
-              </div>
-            )}
-
-            {outputTab === "result" && (
-              <div className="test-results">
-                {!output && !isRunning && (
-                  <div className="no-results">Run code to see results</div>
-                )}
-
-                {isRunning && (
-                  <div className="running-indicator">
-                    <div className="spinner"></div>
-                    <span>Running your code...</span>
-                  </div>
-                )}
-
-                {/* Summary when multiple tests ran */}
-                {output?.testResults && output.testResults.length > 0 && (
-                  <div className="test-summary">
-                    <div className={`summary-header ${output.passedTests === output.totalTests ? 'all-passed' : 'some-failed'}`}>
-                      {output.passedTests === output.totalTests ? '✓' : '✗'} {output.passedTests}/{output.totalTests} Test Cases Passed
-                    </div>
-                  </div>
-                )}
-
-                {output?.verdict && typeof output.samplePassedTests !== "undefined" && (
-                  <div className="test-summary">
-                    <div className={`summary-header ${output.samplePassedTests === output.sampleTotalTests ? 'all-passed' : 'some-failed'}`}>
-                      {output.samplePassedTests === output.sampleTotalTests ? '✓' : '✗'} {output.samplePassedTests}/{output.sampleTotalTests} Sample Tests Passed
-                    </div>
-                  </div>
-                )}
-
-                {/* Test Results with Comparison (RUN only) */}
-                {!output?.verdict && testResults.length > 0 && testResults.map((result, i) => (
-                  <div key={i} className={`result ${result.passed ? "passed" : "failed"}`}>
-                    <div className="result-header">
-                      <span>{result.passed ? "✓" : "✗"} Test Case {result.testCase}</span>
-                      <span className={result.passed ? "status-pass" : "status-fail"}>
-                        {result.passed ? "Passed" : "Failed"}
-                      </span>
-                    </div>
-                    <div className="result-details">
-                      <div className="result-section">
-                        <strong>Input:</strong>
-                        <pre>{result.input}</pre>
-                      </div>
-                      
-                      <div className="result-section">
-                        <strong>Expected Output:</strong>
-                        <pre className="expected">{result.expected}</pre>
-                      </div>
-                      
-                      <div className="result-section">
-                        <strong>Your Output:</strong>
-                        <pre className={result.passed ? "actual-pass" : "actual-fail"}>
-                          {result.actual || "(no output)"}
-                        </pre>
-                      </div>
-
-                      {result.stderr && (
-                        <div className="result-section">
-                          <strong className="error-text">Error Output:</strong>
-                          <pre className="error-text">{result.stderr}</pre>
-                        </div>
-                      )}
-
-                      {result.compile_output && (
-                        <div className="result-section">
-                          <strong className="error-text">Compile Error:</strong>
-                          <pre className="error-text">{result.compile_output}</pre>
-                        </div>
-                      )}
-
-                      {result.time && (
-                        <div className="result-meta">
-                          Runtime: {result.time}s {result.memory && `• Memory: ${result.memory} KB`}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-
-                {/* Submit Accepted (no final verdict card) */}
-                {output?.verdict === "Accepted" && !isRunning && (
-                  <div className="accepted-card">
-                    <div className="accepted-header">
-                      <span className="accepted-check">✓</span>
-                      <span className="accepted-title">Accepted</span>
-                    </div>
-                    <div className="verdict-metrics">
-                      <span>Runtime: {output.time ? `${Math.round(Number(output.time) * 1000)} ms` : "-"}</span>
-                      <span>Memory: {output.memory ? `${output.memory} KB` : "-"}</span>
-                    </div>
-                  </div>
-                )}
-
-                {output?.verdict && testResults.length > 0 && (
-                  <div className="sample-results">
-                    <div className="sample-results-title">Sample Testcases</div>
-                    {testResults.map((result, i) => (
-                      <div key={i} className={`sample-item ${result.passed ? "passed" : "failed"}`}>
-                        <div className="sample-header">
-                          <span>Sample {result.testCase}</span>
-                          <span className={result.passed ? "status-pass" : "status-fail"}>
-                            {result.passed ? "✓ Passed" : "✗ Failed"}
-                          </span>
-                        </div>
-                        <div className="sample-body">
-                          <div>
-                            <strong>Input:</strong>
-                            <pre>{result.input}</pre>
-                          </div>
-                          <div>
-                            <strong>Expected Output:</strong>
-                            <pre>{result.expected}</pre>
-                          </div>
-                          <div>
-                            <strong>Your Output:</strong>
-                            <pre>{result.actual || "(no output)"}</pre>
-                          </div>
-                        </div>
-                      </div>
+            <div className="testcase-content">
+              {outputTab === "testcase" && (
+                <div className="testcase-selector">
+                  <div className="case-buttons">
+                    {currentProblem.testCases.sample.map((_, i) => (
+                      <button
+                        key={i}
+                        className={selectedTestCase === i ? "case-btn active" : "case-btn"}
+                        onClick={() => setSelectedTestCase(i)}
+                      >
+                        Case {i + 1}
+                      </button>
                     ))}
                   </div>
-                )}
-
-                {!isRunning && (output?.stderr || output?.compile_output || output?.message) && (
-                  <div className="console-output">
-                    {output.stderr && (
-                      <div className="output-section">
-                        <strong className="error-text">Runtime Error:</strong>
-                        <pre className="error-text">{output.stderr}</pre>
-                      </div>
-                    )}
-                    {output.compile_output && (
-                      <div className="output-section">
-                        <strong className="error-text">Compilation Error:</strong>
-                        <pre className="error-text">{output.compile_output}</pre>
-                      </div>
-                    )}
-                    {output.message && (
-                      <div className="output-section">
-                        <strong className="error-text">Message:</strong>
-                        <pre className="error-text">{output.message}</pre>
-                      </div>
-                    )}
+                  <div className="testcase-display">
+                    <div className="testcase-label">Input:</div>
+                    <pre className="testcase-input">
+                      {currentProblem.testCases.sample[selectedTestCase].input}
+                    </pre>
+                    <div className="testcase-label">Expected Output:</div>
+                    <pre className="testcase-input">
+                      {currentProblem.testCases.sample[selectedTestCase].expected_output}
+                    </pre>
                   </div>
-                )}
+                </div>
+              )}
 
-                {/* Raw Output (no test case comparison) */}
-                {output && testResults.length === 0 && !isRunning && !output.verdict && !(output.stderr || output.compile_output || output.message) && (
-                  <div className="console-output">
-                    {output.status && (
-                      <div className="status-badge">
-                        Status: {output.status}
-                      </div>
-                    )}
+              {outputTab === "result" && (
+                <div className="test-results">
+                  {!output && !isRunning && (
+                    <div className="no-results">Run code to see results</div>
+                  )}
 
-                    {output.stdout && (
-                      <div className="output-section">
-                        <strong>Output:</strong>
-                        <pre>{output.stdout}</pre>
-                      </div>
-                    )}
-                    
-                    {output.stderr && (
-                      <div className="output-section">
-                        <strong className="error-text">Runtime Error:</strong>
-                        <pre className="error-text">{output.stderr}</pre>
-                      </div>
-                    )}
-                    
-                    {output.compile_output && (
-                      <div className="output-section">
-                        <strong className="error-text">Compilation Error:</strong>
-                        <pre className="error-text">{output.compile_output}</pre>
-                      </div>
-                    )}
+                  {isRunning && (
+                    <div className="running-indicator">
+                      <div className="spinner"></div>
+                      <span>Running your code...</span>
+                    </div>
+                  )}
 
-                    {output.error && (
-                      <div className="output-section">
-                        <strong className="error-text">Error:</strong>
-                        <pre className="error-text">{output.error}</pre>
+                  {/* Summary when multiple tests ran */}
+                  {output?.testResults && output.testResults.length > 0 && (
+                    <div className="test-summary">
+                      <div className={`summary-header ${output.passedTests === output.totalTests ? 'all-passed' : 'some-failed'}`}>
+                        {output.passedTests === output.totalTests ? '✓' : '✗'} {output.passedTests}/{output.totalTests} Test Cases Passed
                       </div>
-                    )}
+                    </div>
+                  )}
 
-                    {output.message && (
-                      <div className="output-section">
-                        <strong className="error-text">Message:</strong>
-                        <pre className="error-text">{output.message}</pre>
+                  {output?.verdict && typeof output.samplePassedTests !== "undefined" && (
+                    <div className="test-summary">
+                      <div className={`summary-header ${output.samplePassedTests === output.sampleTotalTests ? 'all-passed' : 'some-failed'}`}>
+                        {output.samplePassedTests === output.sampleTotalTests ? '✓' : '✗'} {output.samplePassedTests}/{output.sampleTotalTests} Sample Tests Passed
                       </div>
-                    )}
+                    </div>
+                  )}
 
-                    {output.time && (
-                      <div className="result-meta">
-                        Runtime: {output.time}s {output.memory && `• Memory: ${output.memory} KB`}
+                  {/* Test Results with Comparison (RUN only) */}
+                  {!output?.verdict && testResults.length > 0 && testResults.map((result, i) => (
+                    <div key={i} className={`result ${result.passed ? "passed" : "failed"}`}>
+                      <div className="result-header">
+                        <span>{result.passed ? "✓" : "✗"} Test Case {result.testCase}</span>
+                        <span className={result.passed ? "status-pass" : "status-fail"}>
+                          {result.passed ? "Passed" : "Failed"}
+                        </span>
                       </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+                      <div className="result-details">
+                        <div className="result-section">
+                          <strong>Input:</strong>
+                          <pre>{result.input}</pre>
+                        </div>
+
+                        <div className="result-section">
+                          <strong>Expected Output:</strong>
+                          <pre className="expected">{result.expected}</pre>
+                        </div>
+
+                        <div className="result-section">
+                          <strong>Your Output:</strong>
+                          <pre className={result.passed ? "actual-pass" : "actual-fail"}>
+                            {result.actual || "(no output)"}
+                          </pre>
+                        </div>
+
+                        {result.stderr && (
+                          <div className="result-section">
+                            <strong className="error-text">Error Output:</strong>
+                            <pre className="error-text">{result.stderr}</pre>
+                          </div>
+                        )}
+
+                        {result.compile_output && (
+                          <div className="result-section">
+                            <strong className="error-text">Compile Error:</strong>
+                            <pre className="error-text">{result.compile_output}</pre>
+                          </div>
+                        )}
+
+                        {result.time && (
+                          <div className="result-meta">
+                            Runtime: {result.time}s {result.memory && `• Memory: ${result.memory} KB`}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Submit Accepted (no final verdict card) */}
+                  {output?.verdict === "Accepted" && !isRunning && (
+                    <div className="accepted-card">
+                      <div className="accepted-header">
+                        <span className="accepted-check">✓</span>
+                        <span className="accepted-title">Accepted</span>
+                      </div>
+                      <div className="verdict-metrics">
+                        <span>Runtime: {output.time ? `${Math.round(Number(output.time) * 1000)} ms` : "-"}</span>
+                        <span>Memory: {output.memory ? `${output.memory} KB` : "-"}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {output?.verdict && testResults.length > 0 && (
+                    <div className="sample-results">
+                      <div className="sample-results-title">Sample Testcases</div>
+                      {testResults.map((result, i) => (
+                        <div key={i} className={`sample-item ${result.passed ? "passed" : "failed"}`}>
+                          <div className="sample-header">
+                            <span>Sample {result.testCase}</span>
+                            <span className={result.passed ? "status-pass" : "status-fail"}>
+                              {result.passed ? "✓ Passed" : "✗ Failed"}
+                            </span>
+                          </div>
+                          <div className="sample-body">
+                            <div>
+                              <strong>Input:</strong>
+                              <pre>{result.input}</pre>
+                            </div>
+                            <div>
+                              <strong>Expected Output:</strong>
+                              <pre>{result.expected}</pre>
+                            </div>
+                            <div>
+                              <strong>Your Output:</strong>
+                              <pre>{result.actual || "(no output)"}</pre>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {!isRunning && (output?.stderr || output?.compile_output || output?.message) && (
+                    <div className="console-output">
+                      {output.stderr && (
+                        <div className="output-section">
+                          <strong className="error-text">Runtime Error:</strong>
+                          <pre className="error-text">{output.stderr}</pre>
+                        </div>
+                      )}
+                      {output.compile_output && (
+                        <div className="output-section">
+                          <strong className="error-text">Compilation Error:</strong>
+                          <pre className="error-text">{output.compile_output}</pre>
+                        </div>
+                      )}
+                      {output.message && (
+                        <div className="output-section">
+                          <strong className="error-text">Message:</strong>
+                          <pre className="error-text">{output.message}</pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Raw Output (no test case comparison) */}
+                  {output && testResults.length === 0 && !isRunning && !output.verdict && !(output.stderr || output.compile_output || output.message) && (
+                    <div className="console-output">
+                      {output.status && (
+                        <div className="status-badge">
+                          Status: {output.status}
+                        </div>
+                      )}
+
+                      {output.stdout && (
+                        <div className="output-section">
+                          <strong>Output:</strong>
+                          <pre>{output.stdout}</pre>
+                        </div>
+                      )}
+
+                      {output.stderr && (
+                        <div className="output-section">
+                          <strong className="error-text">Runtime Error:</strong>
+                          <pre className="error-text">{output.stderr}</pre>
+                        </div>
+                      )}
+
+                      {output.compile_output && (
+                        <div className="output-section">
+                          <strong className="error-text">Compilation Error:</strong>
+                          <pre className="error-text">{output.compile_output}</pre>
+                        </div>
+                      )}
+
+                      {output.error && (
+                        <div className="output-section">
+                          <strong className="error-text">Error:</strong>
+                          <pre className="error-text">{output.error}</pre>
+                        </div>
+                      )}
+
+                      {output.message && (
+                        <div className="output-section">
+                          <strong className="error-text">Message:</strong>
+                          <pre className="error-text">{output.message}</pre>
+                        </div>
+                      )}
+
+                      {output.time && (
+                        <div className="result-meta">
+                          Runtime: {output.time}s {output.memory && `• Memory: ${output.memory} KB`}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -1018,4 +1040,4 @@ function App() {
   );
 }
 
-export default App;
+export default Workspace;

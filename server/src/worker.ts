@@ -3,6 +3,7 @@
  * Processes code execution jobs from the queue
  ******************************************************************/
 
+import "dotenv/config";
 import { createWorker } from "./services/workerService.js";
 
 console.log("🔥 Worker process starting...");

@@ -84,7 +84,9 @@ export const evaluateTestCases = (
 /* ------------------------------------------------------------------ */
 
 export const createWorker = (): Worker<WorkerJobData> => {
-  const workerRedis = new Redis(REDIS_CONFIG);
+  const workerRedis = process.env.REDIS_URL
+    ? new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: null, enableReadyCheck: false })
+    : new Redis(REDIS_CONFIG);
 
   const worker = new Worker<WorkerJobData>(
     "execution-queue",

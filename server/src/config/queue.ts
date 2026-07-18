@@ -18,7 +18,9 @@ export const REDIS_CONFIG: RedisOptions = {
 /* Redis Client                                                        */
 /* ------------------------------------------------------------------ */
 
-export const redis = new Redis(REDIS_CONFIG);
+export const redis = process.env.REDIS_URL
+  ? new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: null, enableReadyCheck: false })
+  : new Redis(REDIS_CONFIG);
 
 redis.on("connect", () => {
   console.log("✅ Redis client connected successfully!");
@@ -62,7 +64,7 @@ export const updateJob = async (
 ): Promise<void> => {
   await redis.hset(jobKey(jobId), updates);
 };
-  
+
 export const deleteJob = async (jobId: string): Promise<void> => {
   await redis.del(jobKey(jobId));
 };
