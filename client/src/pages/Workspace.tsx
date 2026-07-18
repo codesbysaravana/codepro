@@ -8,7 +8,6 @@ import {
 } from "../store/useAppStore";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000";
-const USER_ID = "user123";
 
 const LANGUAGE_MAP: Record<number, string> = {
   71: "python",
@@ -268,7 +267,7 @@ function Workspace() {
   const handleLanguageChange = (langId: string) => {
     const newLangId = Number(langId);
     setLanguageId(newLangId);
-    
+
     const starterCode = currentProblem?.starter_code?.[newLangId.toString()];
     if (starterCode) {
       setCode(starterCode);
@@ -345,7 +344,7 @@ function Workspace() {
     try {
       const res = await fetch(`${API_BASE}/run`, {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {})
         },
@@ -389,7 +388,7 @@ function Workspace() {
     try {
       const res = await fetch(`${API_BASE}/run`, {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {})
         },
