@@ -1,0 +1,423 @@
+{
+  "codeTemplates": {
+    "python": "# Python solution\nimport sys\n\n# Read number of test cases\nt = int(input())\n\n# Process each test case\nwhile t > 0:\n    # Write your code here\n    # Read input for this test case\n    line = input().strip()\n    # Process and print output\n    print(line)\n    t -= 1",
+    "javascript": "// JavaScript solution\nconst readline = require('readline');\nconst rl = readline.createInterface({ input: process.stdin });\n\nlet lines = [];\nrl.on('line', (line) => lines.push(line));\nrl.on('close', () => {\n    let t = parseInt(lines[0]); // Number of test cases\n    let idx = 1;\n    \n    while (t > 0) {\n        // Write your code here\n        // Read input for this test case\n        let input = lines[idx];\n        // Process and print output\n        console.log(input);\n        idx++;\n        t--;\n    }\n});",
+    "cpp": "#include <iostream>\nusing namespace std;\n\nint main() {\n    int t; // Number of test cases\n    cin >> t;\n    \n    while (t--) {\n        // Write your code here\n        // Read input for this test case\n        int input;\n        cin >> input;\n        // Process and print output\n        cout << input << endl;\n    }\n    return 0;\n}",
+    "java": "import java.util.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        int t = sc.nextInt(); // Number of test cases\n    \n           sc.nextLine();    \n        while (t-- > 0) {\n            // Write your code here\n            // Read input for this test case\n            int input = sc.nextInt();\n            // Process and print output\n            System.out.println(input);\n        }\n    }\n}"
+  },
+  "problems": [
+    {
+      "id": 1,
+      "problem_id": "two_sum_001",
+      "title": "Two Sum",
+      "difficulty": "Easy",
+      "description": "Given an array of integers nums and an integer target, return indices of the two numbers such that they add up to target.\n\nYou may assume that each input would have exactly one solution, and you may not use the same element twice.\n\nYou can return the answer in any order.\n\n**Input Format:**\nThe first line contains the number of test cases `t`.\nFor each test case, read the input and process it inside a while loop:\n```\nint t;\ncin >> t;\nwhile (t--) {\n    // Read input and solve\n}\n```",
+      "examples": [
+        {
+          "input": "nums = [2,7,11,15], target = 9",
+          "output": "[0,1]",
+          "explanation": "Because nums[0] + nums[1] == 9, we return [0, 1]."
+        },
+        {
+          "input": "nums = [3,2,4], target = 6",
+          "output": "[1,2]",
+          "explanation": "Because nums[1] + nums[2] == 6, we return [1, 2]."
+        },
+        {
+          "input": "nums = [3,3], target = 6",
+          "output": "[0,1]",
+          "explanation": null
+        }
+      ],
+      "constraints": [
+        "2 <= nums.length <= 10⁴",
+        "-10⁹ <= nums[i] <= 10⁹",
+        "-10⁹ <= target <= 10⁹",
+        "Only one valid answer exists."
+      ],
+  "testCases": {
+    "sample": [
+      {
+        "input": "4\n2 7 11 15\n9\n",
+        "expected_output": "0 1"
+      },
+      {
+        "input": "3\n3 2 4\n6\n",
+        "expected_output": "1 2"
+      }
+    ],
+    "hidden": [
+      {
+        "input": "2\n3 3\n6\n",
+        "expected_output": "0 1"
+      },
+      {
+        "input": "5\n1 2 3 4 5\n9\n",
+        "expected_output": "3 4"
+      },
+      {
+        "input": "6\n-1 -2 -3 -4 -5 -6\n-7\n",
+        "expected_output": "2 3"
+      },
+      {
+        "input": "4\n0 4 3 0\n0\n",
+        "expected_output": "0 3"
+      },
+      {
+        "input": "7\n1 5 7 1 5 7 3\n8\n",
+        "expected_output": "0 2"
+      },
+      {
+        "input": "3\n1000000 500000 500000\n1000000\n",
+        "expected_output": "1 2"
+      },
+      {
+        "input": "8\n2 4 6 8 10 12 14 16\n18\n",
+        "expected_output": "3 4"
+      },
+      {
+        "input": "5\n-10 20 30 -20 40\n10\n",
+        "expected_output": "0 1"
+      },
+      {
+        "input": "9\n1 1 1 1 1 1 1 1 2\n3\n",
+        "expected_output": "7 8"
+      },
+      {
+        "input": "4\n5 75 25 100\n100\n",
+        "expected_output": "1 2"
+      },
+      {
+        "input": "6\n4 4 4 4 4 4\n8\n",
+        "expected_output": "0 1"
+      },
+      {
+        "input": "5\n9 8 7 6 5\n11\n",
+        "expected_output": "3 4"
+      },
+      {
+        "input": "10\n1 3 5 7 9 11 13 15 17 19\n26\n",
+        "expected_output": "3 9"
+      },
+      {
+        "input": "3\n0 0 0\n0\n",
+        "expected_output": "0 1"
+      },
+      {
+        "input": "6\n-3 4 3 90 0 -4\n0\n",
+        "expected_output": "0 2"
+      }
+    ]
+  }
+    },
+    {
+      "id": 2,
+      "problem_id": "reverse_string_001",
+      "title": "Reverse String",
+      "difficulty": "Easy",
+      "description": "Write a function that reverses a string. The input string is given as an array of characters s.\n\nYou must do this by modifying the input array in-place with O(1) extra memory.\n\n**Input Format:**\nThe first line contains the number of test cases `t`.\nFor each test case, read the input and process it inside a while loop:\n```\nint t;\ncin >> t;\nwhile (t--) {\n    // Read input and solve\n}\n```",
+      "examples": [
+        {
+          "input": "s = [\"h\",\"e\",\"l\",\"l\",\"o\"]",
+          "output": "[\"o\",\"l\",\"l\",\"e\",\"h\"]",
+          "explanation": null
+        },
+        {
+          "input": "s = [\"H\",\"a\",\"n\",\"n\",\"a\",\"h\"]",
+          "output": "[\"h\",\"a\",\"n\",\"n\",\"a\",\"H\"]",
+          "explanation": null
+        }
+      ],
+      "constraints": [
+        "1 <= s.length <= 10⁵",
+        "s[i] is a printable ascii character."
+      ],
+  "testCases": {
+    "sample": [
+      {
+        "input": "hello\n",
+        "expected_output": "olleh"
+      },
+      {
+        "input": "Hannah\n",
+        "expected_output": "hannaH"
+      }
+    ],
+    "hidden": [
+      {
+        "input": "world\n",
+        "expected_output": "dlrow"
+      },
+      {
+        "input": "OpenAI\n",
+        "expected_output": "IAnepO"
+      },
+      {
+        "input": "a\n",
+        "expected_output": "a"
+      },
+      {
+        "input": "racecar\n",
+        "expected_output": "racecar"
+      },
+      {
+        "input": "12345\n",
+        "expected_output": "54321"
+      },
+      {
+        "input": "!@#$%\n",
+        "expected_output": "%$#@!"
+      },
+      {
+        "input": "HelloWorld\n",
+        "expected_output": "dlroWolleH"
+      },
+      {
+        "input": "leetcode\n",
+        "expected_output": "edocteel"
+      },
+      {
+        "input": "UPPERCASE\n",
+        "expected_output": "ESACREPPU"
+      },
+      {
+        "input": "lowercase\n",
+        "expected_output": "esacrewol"
+      },
+      {
+        "input": "MiXeDCaSe\n",
+        "expected_output": "eSaCD eXiM"
+      },
+      {
+        "input": "with space\n",
+        "expected_output": "ecaps htiw"
+      },
+      {
+        "input": "trailing \n",
+        "expected_output": " gniliart"
+      },
+      {
+        "input": "leading\n",
+        "expected_output": "gnidael"
+      },
+      {
+        "input": "9876543210\n",
+        "expected_output": "0123456789"
+      }
+    ]
+  }
+    },
+    {
+      "id": 3,
+      "problem_id": "fizz_buzz_001",
+      "title": "FizzBuzz",
+      "difficulty": "Easy",
+      "description": "Given an integer n, return a string array answer (1-indexed) where:\n\nanswer[i] == \"FizzBuzz\" if i is divisible by 3 and 5.\nanswer[i] == \"Fizz\" if i is divisible by 3.\nanswer[i] == \"Buzz\" if i is divisible by 5.\nanswer[i] == i (as a string) if none of the above conditions are true.\n\n**Input Format:**\nThe first line contains the number of test cases `t`.\nFor each test case, read the input and process it inside a while loop:\n```\nint t;\ncin >> t;\nwhile (t--) {\n    // Read input and solve\n}\n```",
+      "examples": [
+        {
+          "input": "n = 3",
+          "output": "[\"1\",\"2\",\"Fizz\"]",
+          "explanation": null
+        },
+        {
+          "input": "n = 5",
+          "output": "[\"1\",\"2\",\"Fizz\",\"4\",\"Buzz\"]",
+          "explanation": null
+        },
+        {
+          "input": "n = 15",
+          "output": "[\"1\",\"2\",\"Fizz\",\"4\",\"Buzz\",\"Fizz\",\"7\",\"8\",\"Fizz\",\"Buzz\",\"11\",\"Fizz\",\"13\",\"14\",\"FizzBuzz\"]",
+          "explanation": null
+        }
+      ],
+      "constraints": [
+        "1 <= n <= 10⁴"
+      ],
+  "testCases": {
+    "sample": [
+      {
+        "input": "3\n",
+        "expected_output": "1\n2\nFizz"
+      },
+      {
+        "input": "5\n",
+        "expected_output": "1\n2\nFizz\n4\nBuzz"
+      }
+    ],
+    "hidden": [
+      {
+        "input": "1\n",
+        "expected_output": "1"
+      },
+      {
+        "input": "2\n",
+        "expected_output": "1\n2"
+      },
+      {
+        "input": "4\n",
+        "expected_output": "1\n2\nFizz\n4"
+      },
+      {
+        "input": "6\n",
+        "expected_output": "1\n2\nFizz\n4\nBuzz\nFizz"
+      },
+      {
+        "input": "10\n",
+        "expected_output": "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz"
+      },
+      {
+        "input": "15\n",
+        "expected_output": "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz"
+      },
+      {
+        "input": "16\n",
+        "expected_output": "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n16"
+      },
+      {
+        "input": "20\n",
+        "expected_output": "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n16\n17\nFizz\n19\nBuzz"
+      },
+      {
+        "input": "30\n",
+        "expected_output": "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n16\n17\nFizz\n19\nBuzz\nFizz\n22\n23\nFizz\nBuzz\n26\nFizz\n28\n29\nFizzBuzz"
+      },
+      {
+        "input": "7\n",
+        "expected_output": "1\n2\nFizz\n4\nBuzz\nFizz\n7"
+      },
+      {
+        "input": "8\n",
+        "expected_output": "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8"
+      },
+      {
+        "input": "9\n",
+        "expected_output": "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz"
+      },
+      {
+        "input": "11\n",
+        "expected_output": "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11"
+      },
+      {
+        "input": "14\n",
+        "expected_output": "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14"
+      },
+      {
+        "input": "100\n",
+        "expected_output": "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n16\n17\nFizz\n19\nBuzz\nFizz\n22\n23\nFizz\nBuzz\n26\nFizz\n28\n29\nFizzBuzz\n31\n32\nFizz\n34\nBuzz\nFizz\n37\n38\nFizz\nBuzz\n41\nFizz\n43\n44\nFizzBuzz\n46\n47\nFizz\n49\nBuzz\nFizz\n52\n53\nFizz\nBuzz\n56\nFizz\n58\n59\nFizzBuzz\n61\n62\nFizz\n64\nBuzz\nFizz\n67\n68\nFizz\nBuzz\n71\nFizz\n73\n74\nFizzBuzz\n76\n77\nFizz\n79\nBuzz\nFizz\n82\n83\nFizz\nBuzz\n86\nFizz\n88\n89\nFizzBuzz\n91\n92\nFizz\n94\nBuzz\nFizz\n97\n98\nFizz\nBuzz"
+      }
+    ]
+  }
+    },
+
+
+
+
+
+
+    {
+      "id": 4,
+      "problem_id": "valid_palindrome_001",
+      "title": "Valid Palindrome",
+      "difficulty": "Easy",
+      "description": "A phrase is a palindrome if, after converting all uppercase letters into lowercase letters and removing all non-alphanumeric characters, it reads the same forward and backward. Alphanumeric characters include letters and numbers.\n\nGiven a string s, return true if it is a palindrome, or false otherwise.\n\n**Input Format:**\nThe first line contains the number of test cases `t`.\nFor each test case, read the input and process it inside a while loop:\n```\nint t;\ncin >> t;\nwhile (t--) {\n    // Read input and solve\n}\n```",
+      "examples": [
+        {
+          "input": "s = \"A man, a plan, a canal: Panama\"",
+          "output": "true",
+          "explanation": "\"amanaplanacanalpanama\" is a palindrome."
+        },
+        {
+          "input": "s = \"race a car\"",
+          "output": "false",
+          "explanation": "\"raceacar\" is not a palindrome."
+        },
+        {
+          "input": "s = \" \"",
+          "output": "true",
+          "explanation": "s is an empty string \"\" after removing non-alphanumeric characters. Since an empty string reads the same forward and backward, it is a palindrome."
+        }
+      ],
+      "constraints": [
+        "1 <= s.length <= 2 * 10⁵",
+        "s consists only of printable ASCII characters."
+      ],
+  "testCases": {
+    "sample": [
+      {
+        "input": "A man, a plan, a canal: Panama\n",
+        "expected_output": "true"
+      },
+      {
+        "input": "race a car\n",
+        "expected_output": "false"
+      }
+    ],
+    "hidden": [
+      {
+        "input": " \n",
+        "expected_output": "true"
+      },
+      {
+        "input": "a\n",
+        "expected_output": "true"
+      },
+      {
+        "input": "aa\n",
+        "expected_output": "true"
+      },
+      {
+        "input": "ab\n",
+        "expected_output": "false"
+      },
+      {
+        "input": "No lemon, no melon\n",
+        "expected_output": "true"
+      },
+      {
+        "input": "Was it a car or a cat I saw?\n",
+        "expected_output": "true"
+      },
+      {
+        "input": "Madam, I'm Adam\n",
+        "expected_output": "true"
+      },
+      {
+        "input": "0P\n",
+        "expected_output": "false"
+      },
+      {
+        "input": "12321\n",
+        "expected_output": "true"
+      },
+      {
+        "input": "1231\n",
+        "expected_output": "false"
+      },
+      {
+        "input": "Able was I ere I saw Elba\n",
+        "expected_output": "true"
+      },
+      {
+        "input": ".,,\n",
+        "expected_output": "true"
+      },
+      {
+        "input": "Red rum, sir, is murder\n",
+        "expected_output": "true"
+      },
+      {
+        "input": "Palindrome\n",
+        "expected_output": "false"
+      },
+      {
+        "input": "Do geese see God?\n",
+        "expected_output": "true"
+      }
+    ]
+  }
+    }
+
+
+
+  ]
+}

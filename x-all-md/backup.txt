@@ -1,0 +1,1129 @@
+index.js : 
+const express = require("express");
+const axios = require("axios");
+const cors = require("cors");
+const { v4: uuidv4 } = require("uuid");
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+const JUDGE0_URL = "http://100.126.169.48:2358";
+
+// 🔄 In-Memory Job Queue (MVP)
+// TODO: Upgrade to Redis/BullMQ for production
+const jobStore = new Map(); // { jobId: { status, token, result, createdAt } }
+
+// Job statuses
+const JOB_STATUS = {
+  QUEUED: "queued",
+  PROCESSING: "processing",
+  COMPLETED: "completed",
+  FAILED: "failed",
+  TIMEOUT: "timeout"
+};
+
+// ✅ Non-blocking execution function (worker)
+const executeSubmission = async (jobId, code, language_id, stdin = "") => {
+  try {
+    jobStore.set(jobId, {
+      status: JOB_STATUS.PROCESSING,
+      token: null,
+      result: null,
+      error: null,
+      createdAt: Date.now()
+    });
+
+    console.log(`[WORKER] Job ${jobId} - Submitting to Judge0`);
+
+    // Step 1: Submit to Judge0
+    const submit = await axios.post(
+      `${JUDGE0_URL}/submissions`,
+      { source_code: code, language_id, stdin },
+      { params: { base64_encoded: false, fields: "token" } }
+    );
+
+    const token = submit.data.token;
+    if (!token) throw new Error("No token from Judge0");
+
+    console.log(`[WORKER] Job ${jobId} - Token: ${token}`);
+
+    // Update job with token
+    const job = jobStore.get(jobId);
+    job.token = token;
+
+    // Step 2: Poll until complete
+    const result = await pollSubmission(token, { maxRetries: 60, intervalMs: 500 });
+
+    if (!result.done) {
+      jobStore.set(jobId, { ...job, status: JOB_STATUS.TIMEOUT, error: "Execution timeout" });
+      console.error(`[WORKER] Job ${jobId} - Timeout`);
+      return;
+    }
+
+    // Step 3: Store result
+    const payload = buildPayload(result.data);
+    jobStore.set(jobId, {
+      status: JOB_STATUS.COMPLETED,
+      token,
+      result: payload,
+      error: null,
+      createdAt: Date.now()
+    });
+
+    console.log(`[WORKER] Job ${jobId} - ✓ Completed`);
+  } catch (err) {
+    console.error(`[WORKER] Job ${jobId} - ✗ Error:`, err.message);
+    jobStore.set(jobId, {
+      status: JOB_STATUS.FAILED,
+      token: null,
+      result: null,
+      error: err.message,
+      createdAt: Date.now()
+    });
+  }
+};
+
+// Cleanup old jobs (every 5 minutes)
+setInterval(() => {
+  const now = Date.now();
+  const maxAge = 30 * 60 * 1000; // 30 minutes
+  for (const [jobId, job] of jobStore.entries()) {
+    if (now - job.createdAt > maxAge) {
+      jobStore.delete(jobId);
+      console.log(`[CLEANUP] Deleted job ${jobId}`);
+    }
+  }
+}, 5 * 60 * 1000);
+
+const buildPayload = (data) => {
+  const combinedOutput = data.stdout || data.stderr || data.compile_output || "";
+  
+  // Extract status carefully - it may be an object or string
+  let statusDesc = data.status?.description || data.status || "Unknown";
+  if (typeof statusDesc === "object") {
+    statusDesc = statusDesc.description || "Unknown";
+  }
+  
+  let statusId = data.status?.id;
+  if (typeof data.status === "object" && !statusId) {
+    statusId = data.status.id;
+  }
+  
+  return {
+    token: data.token,
+    status: statusDesc,
+    status_id: statusId,
+    stdout: data.stdout || "",
+    stderr: data.stderr || "",
+    compile_output: data.compile_output || "",
+    message: data.message || "",
+    time: data.time,
+    memory: data.memory,
+    output: combinedOutput // backward-friendly field for simple UIs
+  };
+};
+
+// Small sleep helper for polling intervals.
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Poll Judge0 until the submission finishes or we hit retry limits.
+const pollSubmission = async (token, { maxRetries = 30, intervalMs = 800 } = {}) => {
+  let attempt = 0;
+  console.log(`[POLL] Starting poll for token: ${token}`);
+  
+  while (attempt < maxRetries) {
+    try {
+      const resp = await axios.get(`${JUDGE0_URL}/submissions/${token}`, {
+        params: {
+          base64_encoded: false,
+          fields: "token,status,status_id,stdout,stderr,compile_output,message,time,memory"
+        }
+      });
+
+      // Judge0 returns status as { id: number, description: string }
+      const statusId = resp.data.status?.id;
+      const statusDesc = resp.data.status?.description;
+      
+      console.log(`[POLL] Attempt ${attempt + 1}/${maxRetries}: status=${statusDesc} (id=${statusId})`);
+
+      // Status 1 = In Queue, 2 = Processing
+      // Any other status means done
+      if (statusId !== 1 && statusId !== 2) {
+        console.log(`[POLL] Execution complete. Status: ${statusDesc}`);
+        return { done: true, data: resp.data };
+      }
+
+      attempt += 1;
+      await delay(intervalMs);
+    } catch (err) {
+      console.error(`[POLL] Error during polling attempt ${attempt + 1}:`, err.message);
+      attempt += 1;
+      await delay(intervalMs);
+    }
+  }
+
+  // Timed out
+  console.error(`[POLL] Timeout after ${maxRetries} attempts`);
+  return { done: false, data: null };
+};
+
+// Health check
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
+});
+
+// 1️⃣ NEW: Non-blocking /run → enqueue job and return immediately
+app.post("/run", async (req, res) => {
+  const { code, language_id, stdin = "" } = req.body;
+
+  console.log("\n========== [API] /run REQUEST ==========");
+  console.log("Language ID:", language_id);
+  console.log("Code preview:", code.slice(0, 50) + "...");
+  console.log("==================================\n");
+
+  if (!code || !language_id) {
+    return res.status(400).json({ error: "code and language_id are required" });
+  }
+
+  // Create job and return immediately (non-blocking)
+  const jobId = uuidv4();
+  jobStore.set(jobId, {
+    status: JOB_STATUS.QUEUED,
+    token: null,
+    result: null,
+    error: null,
+    createdAt: Date.now()
+  });
+
+  console.log(`[API] Job ${jobId} created and queued`);
+
+  // Execute in background (don't await)
+  executeSubmission(jobId, code, language_id, stdin);
+
+  // Return job ID immediately
+  res.json({
+    job_id: jobId,
+    status: JOB_STATUS.QUEUED,
+    message: "Job queued. Poll /job/{job_id} for results."
+  });
+});
+
+// 2️⃣ NEW: Fetch job status and result
+app.get("/job/:jobId", (req, res) => {
+  const { jobId } = req.params;
+
+  const job = jobStore.get(jobId);
+  if (!job) {
+    return res.status(404).json({ error: "Job not found" });
+  }
+
+  // If still processing, return status only
+  if (job.status === JOB_STATUS.QUEUED || job.status === JOB_STATUS.PROCESSING) {
+    return res.json({
+      job_id: jobId,
+      status: job.status,
+      message: job.status === JOB_STATUS.QUEUED ? "Queued..." : "Executing..."
+    });
+  }
+
+  // If completed, return full result
+  if (job.status === JOB_STATUS.COMPLETED) {
+    return res.json({
+      job_id: jobId,
+      status: job.status,
+      result: job.result
+    });
+  }
+
+  // If failed or timeout
+  res.status(400).json({
+    job_id: jobId,
+    status: job.status,
+    error: job.error
+  });
+});
+
+// 3️⃣ Legacy /submissions endpoint (for backward compatibility)
+app.post("/submissions", async (req, res) => {
+  const { code, language_id, stdin = "", expected_output = "" } = req.body;
+
+  if (!code || !language_id) {
+    return res.status(400).json({ error: "code and language_id are required" });
+  }
+
+  try {
+    const response = await axios.post(
+      `${JUDGE0_URL}/submissions`,
+      {
+        source_code: code,
+        language_id,
+        stdin,
+        expected_output
+      },
+      {
+        params: {
+          base64_encoded: false,
+          fields:
+            "token,status,status_id,stdout,stderr,compile_output,message,time,memory"
+        }
+      }
+    );
+
+    res.json({ token: response.data.token });
+  } catch (err) {
+    const apiMessage = err.response?.data || err.message || "Submission failed";
+    res.status(500).json({ error: apiMessage });
+  }
+});
+
+// 3️⃣ Poll result by token (for async flow)
+app.get("/submissions/:token", async (req, res) => {
+  const { token } = req.params;
+
+  try {
+    const response = await axios.get(`${JUDGE0_URL}/submissions/${token}`, {
+      params: {
+        base64_encoded: false,
+        fields:
+          "token,status,status_id,stdout,stderr,compile_output,message,time,memory"
+      }
+    });
+    res.json(buildPayload(response.data));
+  } catch (err) {
+    const apiMessage = err.response?.data || err.message || "Polling failed";
+    res.status(500).json({ error: apiMessage });
+  }
+});
+
+// 4️⃣ List languages so the frontend can populate the selector
+app.get("/languages", async (_req, res) => {
+  try {
+    const response = await axios.get(`${JUDGE0_URL}/languages`, {
+      params: { base64_encoded: false }
+    });
+    res.json(response.data);
+  } catch (err) {
+    const apiMessage = err.response?.data || err.message || "Unable to fetch languages";
+    res.status(500).json({ error: apiMessage });
+  }
+});
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`Wrapper running on http://localhost:${PORT}`);
+});
+
+
+
+
+app.jsx: 
+import { useState } from "react";
+import "./App.css";
+
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000";
+
+// Language templates
+const TEMPLATES = {
+  71: `# Python Template
+def main():
+    print("Hello from Python!")
+    
+if __name__ == "__main__":
+    main()`,
+  
+  63: `
+function main() {
+    console.log("Hello from JavaScript!");
+}
+
+main();`,
+  
+  50: `
+#include <stdio.h>
+
+int main() {
+    printf("Hello from C!\\n");
+    return 0;
+}`,
+  
+  54: `
+#include <iostream>
+using namespace std;
+
+int main() {
+    cout << "Hello from C++!" << endl;
+    return 0;
+}`,
+  
+  62: `
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("Hello from Java!");
+    }
+}`
+};
+
+// Fixed language list
+const LANGUAGES = [
+  { id: 71, name: "Python" },
+  { id: 63, name: "JavaScript" },
+  { id: 50, name: "C" },
+  { id: 54, name: "C++" },
+  { id: 62, name: "Java" }
+];
+
+function App() {
+  const [code, setCode] = useState(TEMPLATES[54]); // Start with C++
+  const [languageId, setLanguageId] = useState(54);
+  const [stdin, setStdin] = useState("");
+  const [output, setOutput] = useState(null);
+  const [isRunning, setIsRunning] = useState(false);
+  const [error, setError] = useState("");
+  const [jobId, setJobId] = useState(null);
+  const [pollInterval, setPollInterval] = useState(null);
+
+  // Handle language change and load template
+  const handleLanguageChange = (newLangId) => {
+    const langId = Number(newLangId);
+    setLanguageId(langId);
+    setCode(TEMPLATES[langId] || "");
+    setOutput(null);
+    setError("");
+  };
+
+  // Poll job status
+  const pollJob = async (jId) => {
+    try {
+      const res = await fetch(`${API_BASE}/job/${jId}`);
+      const data = await res.json();
+
+      if (data.status === "queued" || data.status === "processing") {
+        // Still running, keep polling
+        return;
+      }
+
+      // Job finished
+      if (data.status === "completed") {
+        setOutput(data.result);
+        setError("");
+      } else {
+        setError(data.error || "Job failed");
+      }
+
+      // Stop polling
+      clearInterval(pollInterval);
+      setIsRunning(false);
+      setJobId(null);
+    } catch (err) {
+      console.error("Polling error:", err);
+    }
+  };
+
+  // Submit code
+  const runCode = async () => {
+    setIsRunning(true);
+    setError("");
+    setOutput(null);
+    setJobId(null);
+
+    try {
+      // Submit and get job ID (non-blocking)
+      const res = await fetch(`${API_BASE}/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, language_id: languageId, stdin })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || "Submission failed");
+        setIsRunning(false);
+        return;
+      }
+
+      const jId = data.job_id;
+      setJobId(jId);
+      console.log("Job submitted:", jId);
+
+      // Start polling for results
+      const interval = setInterval(() => pollJob(jId), 500);
+      setPollInterval(interval);
+    } catch (err) {
+      setError(err.message || "Request failed");
+      setIsRunning(false);
+    }
+  };
+
+  return (
+    <div className="page">
+      <header className="hero">
+        <div>
+          <p className="eyebrow">MVP · Judge0 Wrapper</p>
+          <h1>Run code in the sandbox.</h1>
+          <p className="lede">
+            Paste code, pick a language, and see stdout, stderr, or compile errors straight from Judge0.
+          </p>
+        </div>
+        <button className="run" onClick={runCode} disabled={isRunning}>
+          {isRunning ? `Running... (Job: ${jobId?.slice(0, 8)})` : "Run"}
+        </button>
+      </header>
+
+      <section className="grid">
+        <div className="card">
+          <div className="field">
+            <label htmlFor="language">Language</label>
+            <select
+              id="language"
+              value={languageId}
+              onChange={(e) => handleLanguageChange(e.target.value)}
+            >
+              {LANGUAGES.map((lang) => (
+                <option key={lang.id} value={lang.id}>
+                  {lang.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field">
+            <label htmlFor="code">Source code</label>
+            <textarea
+              id="code"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              rows={14}
+              spellCheck={false}
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="stdin">stdin (optional)</label>
+            <textarea
+              id="stdin"
+              value={stdin}
+              onChange={(e) => setStdin(e.target.value)}
+              rows={4}
+              spellCheck={false}
+            />
+          </div>
+        </div>
+
+        <div className="card output">
+          <div className="field">
+            <label>Status</label>
+            <div className="status">
+              {output?.status ? String(output.status) : "Awaiting run"}
+            </div>
+          </div>
+
+          <div className="field">
+            <label>stdout</label>
+            <pre className="pane">{output?.stdout ? String(output.stdout) : ""}</pre>
+          </div>
+
+          <div className="field">
+            <label>stderr</label>
+            <pre className="pane error">{output?.stderr ? String(output.stderr) : ""}</pre>
+          </div>
+
+          <div className="field">
+            <label>compile output</label>
+            <pre className="pane warn">{output?.compile_output ? String(output.compile_output) : ""}</pre>
+          </div>
+
+          {output?.time && (
+            <div className="meta">
+              <span>time: {output.time}s</span>
+              {output.memory && <span> · memory: {output.memory} KB</span>}
+              {output.token && <span> · token: {output.token}</span>}
+            </div>
+          )}
+
+          {error && <div className="error-banner">{error}</div>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export default App;
+
+
+
+script.js : 
+const runCode = async () => {
+    const code = document.getElementById('code').value;
+    const language_id = document.getElementById('language').value;
+    const outputElement = document.getElementById('output');
+
+    outputElement.textContent = 'Running...';
+
+    const response = await fetch('http://localhost:5000/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, language_id })
+    });
+
+    const data = await response.json();
+    if (data.error) {
+        outputElement.textContent = data.error;
+    } else {
+        // Prefer stdout, otherwise stderr, otherwise compile output
+        outputElement.textContent = data.stdout || data.stderr || data.compile_output || data.output || "";
+    }
+};
+
+document.getElementById('runButton').addEventListener('click', runCode);
+
+
+
+
+app.js:
+import { useState } from "react";
+
+function App() {
+  const [code, setCode] = useState("print('Hello World')");
+  const [output, setOutput] = useState("");
+  const [token, setToken] = useState("");
+
+  const runCode = async () => {
+    setOutput("Running...");
+
+    // Submit code
+    const res = await fetch("http://localhost:5000/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code: code,
+        language_id: 71
+      })
+    });
+
+    const data = await res.json();
+    if (data.error) {
+      setOutput(data.error);
+    } else {
+      setOutput(data.output);
+    }
+  };
+
+  return (
+    <div>
+      <h1>Code Runner</h1>
+      <textarea
+        value={code}
+        onChange={(e) => setCode(e.target.value)}
+        rows="10"
+        cols="50"
+      />
+      <br />
+      <button onClick={runCode}>Run Code</button>
+      <h2>Output:</h2>
+      <pre>{output}</pre>
+    </div>
+  );
+}
+
+export default App;
+
+
+
+app.css:
+.page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 32px 24px 48px;
+  color: #0f172a;
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.eyebrow {
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 12px;
+  color: #64748b;
+  margin: 0 0 4px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 32px;
+}
+
+.lede {
+  margin-top: 8px;
+  color: #475569;
+  max-width: 700px;
+}
+
+.run {
+  background: #2563eb;
+  color: white;
+  border: none;
+  padding: 12px 18px;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 10px 25px rgba(37, 99, 235, 0.2);
+}
+
+.run:disabled {
+  background: #94a3b8;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+label {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+select,
+textarea {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  padding: 10px 12px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  background: #f8fafc;
+  min-height: 40px;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.output .pane {
+  background: #0b1221;
+  color: #e2e8f0;
+  min-height: 90px;
+  border-radius: 10px;
+  padding: 12px;
+  overflow: auto;
+}
+
+.output .pane.error {
+  background: #1f0b12;
+  color: #fecdd3;
+}
+
+.output .pane.warn {
+  background: #1f190b;
+  color: #fef3c7;
+}
+
+.status {
+  padding: 10px 12px;
+  background: #e2e8f0;
+  border-radius: 10px;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.meta {
+  color: #475569;
+  font-size: 14px;
+  margin-top: 4px;
+}
+
+.error-banner {
+  background: #fee2e2;
+  color: #991b1b;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #fecdd3;
+  margin-top: 8px;
+}
+
+@media (max-width: 960px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hero {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+
+
+new 2/3/26 - 6:09PM index.js :     
+const express = require("express");
+const axios = require("axios");
+const cors = require("cors");
+const { v4: uuidv4 } = require("uuid");
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+const JUDGE0_URL = "http://100.126.169.48:2358";
+
+// 🔄 In-Memory Job Queue (MVP)
+// TODO: Upgrade to Redis/BullMQ for production
+const jobStore = new Map(); // { jobId: { status, token, result, createdAt, userId } }
+const tokenToJobId = new Map(); // { token: jobId }
+
+// 📡 SSE Connection Management
+const sseConnections = new Map(); // { userId: [res1, res2, ...] }
+
+// Broadcast result to specific user's SSE connections
+const broadcastToUser = (userId, data) => {
+  const connections = sseConnections.get(userId);
+  if (!connections || connections.length === 0) {
+    console.log(`[SSE] No active connections for user ${userId}`);
+    return;
+  }
+
+  console.log(`[SSE] Broadcasting to user ${userId} (${connections.length} connections)`);
+  const message = `event: job-complete\ndata: ${JSON.stringify(data)}\n\n`;
+  
+  connections.forEach((res, index) => {
+    try {
+      res.write(message);
+    } catch (err) {
+      console.error(`[SSE] Failed to send to connection ${index}:`, err.message);
+    }
+  });
+};
+
+// Job statuses
+const JOB_STATUS = {
+  QUEUED: "queued",
+  PROCESSING: "processing",
+  COMPLETED: "completed",
+  FAILED: "failed",
+  TIMEOUT: "timeout"
+};
+
+// ✅ Non-blocking execution function (worker)
+const executeSubmission = async (jobId, code, language_id, stdin = "") => {
+  try {
+    // Get existing job to preserve userId
+    const existingJob = jobStore.get(jobId);
+    const userId = existingJob?.userId;
+
+    jobStore.set(jobId, {
+      status: JOB_STATUS.PROCESSING,
+      token: null,
+      result: null,
+      error: null,
+      createdAt: Date.now(),
+      userId // Preserve the userId from /run
+    });
+
+    console.log(`[WORKER] Job ${jobId} - Submitting to Judge0 (user: ${userId})`);
+
+    // Step 1: Submit to Judge0 (no callback needed)
+    const submit = await axios.post(
+      `${JUDGE0_URL}/submissions`,
+      {
+        source_code: code,
+        language_id,
+        stdin,
+        base64_encoded: false
+      },
+      { params: { base64_encoded: false, fields: "token" } }
+    );
+
+    const token = submit.data.token;
+    if (!token) throw new Error("No token from Judge0");
+
+    console.log(`[WORKER] Job ${jobId} - Token: ${token}`);
+
+    // Update job with token
+    const job = jobStore.get(jobId);
+    job.token = token;
+    tokenToJobId.set(token, jobId);
+
+    // Step 2: Start polling Judge0 for results
+    console.log(`[WORKER] Job ${jobId} - Starting polling loop`);
+    
+    // Poll every 500ms with max 60 attempts (30 seconds timeout)
+    let attempts = 0;
+    const maxAttempts = 60;
+    const pollInterval = setInterval(async () => {
+      attempts++;
+      
+      try {
+        const statusRes = await axios.get(
+          `${JUDGE0_URL}/submissions/${token}`,
+          { params: { base64_encoded: false, fields: "*" } }
+        );
+
+        const data = statusRes.data;
+        const statusId = data.status?.id;
+
+        // Status 3 = Accepted (complete), 4 = Wrong Answer, 5 = Runtime Error, etc.
+        // Status 1 = In Queue, 2 = Processing
+        console.log(`[POLL] Job ${jobId} - Status ID: ${statusId}, Attempt: ${attempts}`);
+
+        if (statusId && statusId > 2) {
+          // Job completed
+          console.log(`[POLL] Job ${jobId} - ✓ COMPLETED`);
+          
+          const payload = buildPayload(data);
+          const jobData = jobStore.get(jobId);
+          jobData.status = JOB_STATUS.COMPLETED;
+          jobData.result = payload;
+
+          console.log(`[POLL] Broadcasting result to user: ${jobData.userId}`);
+
+          // Broadcast to user via SSE
+          if (jobData.userId) {
+            console.log(`[SSE] Sending job-complete event for job ${jobId}`);
+            broadcastToUser(jobData.userId, {
+              jobId,
+              result: payload
+            });
+          }
+
+          clearInterval(pollInterval);
+          tokenToJobId.delete(token);
+        } else if (attempts >= maxAttempts) {
+          // Timeout
+          console.log(`[POLL] Job ${jobId} - ✗ TIMEOUT (30s)`);
+          const jobData = jobStore.get(jobId);
+          jobData.status = JOB_STATUS.TIMEOUT;
+          jobData.error = "Execution timeout (30 seconds)";
+
+          if (jobData.userId) {
+            broadcastToUser(jobData.userId, {
+              jobId,
+              error: "Timeout"
+            });
+          }
+
+          clearInterval(pollInterval);
+          tokenToJobId.delete(token);
+        }
+      } catch (pollErr) {
+        console.error(`[POLL] Job ${jobId} - Polling error:`, pollErr.message);
+        if (attempts >= maxAttempts) {
+          clearInterval(pollInterval);
+        }
+      }
+    }, 500);
+
+  } catch (err) {
+    console.error(`[WORKER] Job ${jobId} - ✗ Error:`, err.message);
+    const jobData = jobStore.get(jobId);
+    jobData.status = JOB_STATUS.FAILED;
+    jobData.error = err.message;
+  }
+};
+
+// Cleanup old jobs (every 5 minutes)
+setInterval(() => {
+  const now = Date.now();
+  const maxAge = 30 * 60 * 1000; // 30 minutes
+  for (const [jobId, job] of jobStore.entries()) {
+    if (now - job.createdAt > maxAge) {
+      jobStore.delete(jobId);
+      console.log(`[CLEANUP] Deleted job ${jobId}`);
+    }
+  }
+}, 5 * 60 * 1000);
+
+const buildPayload = (data) => {
+  const combinedOutput = data.stdout || data.stderr || data.compile_output || "";
+  
+  // Extract status carefully - it may be an object or string
+  let statusDesc = data.status?.description || data.status || "Unknown";
+  if (typeof statusDesc === "object") {
+    statusDesc = statusDesc.description || "Unknown";
+  }
+  
+  let statusId = data.status?.id;
+  if (typeof data.status === "object" && !statusId) {
+    statusId = data.status.id;
+  }
+  
+  return {
+    token: data.token,
+    status: statusDesc,
+    status_id: statusId,
+    stdout: data.stdout || "",
+    stderr: data.stderr || "",
+    compile_output: data.compile_output || "",
+    message: data.message || "",
+    time: data.time,
+    memory: data.memory,
+    output: combinedOutput // backward-friendly field for simple UIs
+  };
+};
+
+// Health check
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
+});
+
+// 📡 SSE Endpoint - Frontend connects here for real-time updates
+app.get("/events", (req, res) => {
+  const userId = req.query.userId || "anonymous";
+  
+  console.log(`[SSE] New connection from user: ${userId}`);
+  
+  // Set SSE headers
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  
+  // Add connection to user's list
+  if (!sseConnections.has(userId)) {
+    sseConnections.set(userId, []);
+  }
+  sseConnections.get(userId).push(res);
+  
+  // Send initial connection confirmation
+  res.write(`event: connected\ndata: {"userId":"${userId}"}\n\n`);
+  
+  // Clean up on disconnect
+  req.on("close", () => {
+    console.log(`[SSE] Connection closed for user: ${userId}`);
+    const connections = sseConnections.get(userId);
+    if (connections) {
+      const filtered = connections.filter(r => r !== res);
+      if (filtered.length === 0) {
+        sseConnections.delete(userId);
+      } else {
+        sseConnections.set(userId, filtered);
+      }
+    }
+  });
+});
+
+// 1️⃣ NEW: Non-blocking /run → enqueue job and return immediately
+app.post("/run", async (req, res) => {
+  const { code, language_id, stdin = "", userId = "anonymous" } = req.body;
+
+  console.log("\n========== [API] /run REQUEST ==========");
+  console.log("User ID:", userId);
+  console.log("Language ID:", language_id);
+  console.log("Code preview:", code.slice(0, 50) + "...");
+  console.log("==================================\n");
+
+  if (!code || !language_id) {
+    return res.status(400).json({ error: "code and language_id are required" });
+  }
+
+  // Create job and return immediately (non-blocking)
+  const jobId = uuidv4();
+  jobStore.set(jobId, {
+    status: JOB_STATUS.QUEUED,
+    token: null,
+    result: null,
+    error: null,
+    createdAt: Date.now(),
+    userId // Store userId for SSE routing
+  });
+
+  console.log(`[API] Job ${jobId} created and queued for user ${userId}`);
+
+  // Execute in background (don't await) - will poll Judge0
+  executeSubmission(jobId, code, language_id, stdin);
+
+  // Return job ID immediately
+  res.json({
+    job_id: jobId,
+    status: JOB_STATUS.QUEUED,
+    message: "Job queued. Poll /job/{job_id} for results."
+  });
+});
+
+
+// 2️⃣ NEW: Fetch job status and result
+app.get("/job/:jobId", (req, res) => {
+  const { jobId } = req.params;
+
+  console.log(`[POLL] /job/${jobId} - Status check`);
+  
+  const job = jobStore.get(jobId);
+  if (!job) {
+    console.log(`[POLL] Job ${jobId} - ✗ NOT FOUND`);
+    return res.status(404).json({ error: "Job not found" });
+  }
+
+  console.log(`[POLL] Job ${jobId} - Status: ${job.status}`);
+
+  // If still processing, return status only
+  if (job.status === JOB_STATUS.QUEUED || job.status === JOB_STATUS.PROCESSING) {
+    console.log(`[POLL] Job ${jobId} - Still running...`);
+    return res.json({
+      job_id: jobId,
+      status: job.status,
+      message: job.status === JOB_STATUS.QUEUED ? "Queued..." : "Executing..."
+    });
+  }
+
+  // If completed, return full result
+  if (job.status === JOB_STATUS.COMPLETED) {
+    console.log(`[POLL] Job ${jobId} - ✓ COMPLETED - Returning result`);
+    return res.json({
+      job_id: jobId,
+      status: job.status,
+      result: job.result
+    });
+  }
+
+  // If failed or timeout
+  console.log(`[POLL] Job ${jobId} - ✗ ${job.status.toUpperCase()}`);
+  res.status(400).json({
+    job_id: jobId,
+    status: job.status,
+    error: job.error
+  });
+});
+
+// 4️⃣ List languages so the frontend can populate the selector
+app.get("/languages", async (_req, res) => {
+  try {
+    const response = await axios.get(`${JUDGE0_URL}/languages`, {
+      params: { base64_encoded: false }
+    });
+    res.json(response.data);
+  } catch (err) {
+    const apiMessage = err.response?.data || err.message || "Unable to fetch languages";
+    res.status(500).json({ error: apiMessage });
+  }
+});
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`✅ Wrapper running on http://localhost:${PORT}`);
+  console.log(`📡 SSE endpoint: /events?userId=<userId>`);
+  console.log(`🔄 Polling Judge0 for execution results`);
+});
