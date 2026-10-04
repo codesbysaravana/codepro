@@ -119,5 +119,3 @@ docker-compose.override.yml
 x-all-md
 
 .env
-
-render.yaml
