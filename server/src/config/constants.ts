@@ -1,8 +1,7 @@
 // Configuration constants
 
 export const JUDGE0_URL: string =
-  //process.env.JUDGE0_URL ?? "http://172.17.0.1:2358";
-  process.env.JUDGE0_URL ?? "http://localhost:2358/";
+  process.env.JUDGE0_CLOUD_URL ?? "https://judge0-ce.p.rapidapi.com";
 
 export const PORT: number = Number(process.env.PORT ?? 5000);
 
@@ -26,5 +25,5 @@ export const MAX_POLL_ATTEMPTS = 60; // 30 seconds total
 export const JOB_MAX_AGE = 30 * 60 * 1000; // 30 minutes
 export const CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
- 
+
 

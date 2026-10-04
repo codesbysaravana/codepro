@@ -11,8 +11,9 @@ services:
     container_name: judgeweb-backend
     environment:
       # Node environment
-      - NODE_ENV=production
+      - NODE_ENV=${NODE_ENV:-development}
       - PORT=${BACKEND_PORT:-5000}
+      - JUDGE0_URL=${JUDGE0_URL}
       
     ports:
       - "${BACKEND_PORT:-5000}:5000"
