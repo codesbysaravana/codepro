@@ -67,5 +67,7 @@ app.listen(PORT, () => {
   console.log(`  POST /run              - Submit code`);
   console.log(`  GET  /job/:jobId       - Get job status`);
   console.log(`  GET  /languages        - List languages`);
-  console.log(`\n⚠️ Note: Start worker process with 'node dist/worker.js'`);
 });
+
+// Start the worker in the same process to save costs
+import "./worker.js";
