@@ -131,3 +131,26 @@ You can also run the application using Docker Compose:
 docker-compose up --build
 ```
 This will start the backend (API + Worker) and frontend (served via Nginx) containers.
+
+## 🟢 Running in production
+
+This engine runs inside **CodePro**, a college placement coding platform operated by St. Joseph's Placements. The dashboard below is CodePro's — it monitors the engine live in production.
+
+[Live metrics (CodePro production)](https://grafana.stjosephsplacements.in/public-dashboards/b65e72b16769417c803e9001efa06da8)
+
+As of the screenshots taken on **18 October 2026**:
+
+- **Total Judge Runs (all time):** 41,350 — the total number of code executions sent to Judge0 since the platform launched.
+- **Total Submissions (all time):** 16,220 — the number of student code submissions processed end-to-end through the BullMQ queue.
+- **Total Tests Taken (all time):** 1,883 — the number of full exam attempts completed on the platform.
+- **Workers Active (DB):** 8 — background worker processes registered and polling the queue at the time of capture.
+- **Registered Students:** 814 — total student accounts on the platform.
+- **API Latency p95 by Path (last 1 hour):** 7.5 – 9.5 ms — 95th-percentile response time on the `/metrics` endpoint of the execution engine.
+
+---
+
+[![Live Pulse — totals](docs/production/live_pulse_totals.png)](https://grafana.stjosephsplacements.in/public-dashboards/b65e72b16769417c803e9001efa06da8)
+*Live Pulse panel: all-time counters and active worker count.*
+
+[![Judge Engine — API latency and infrastructure](docs/production/judge_engine_latency_infra.png)](https://grafana.stjosephsplacements.in/public-dashboards/b65e72b16769417c803e9001efa06da8)
+*Judge Engine section: API request rate, p95 latency, CPU, memory, and Nginx active connections.*
