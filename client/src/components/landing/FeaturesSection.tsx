@@ -14,7 +14,7 @@ export default function FeaturesSection() {
             <span className="material-symbols-outlined text-primary">language</span>
           </div>
           <h3 className="font-headline-md text-body-lg font-semibold text-on-surface mb-sm">Multi-language Support</h3>
-          <p className="font-body-md text-body-md text-on-surface-variant">From system languages like Rust and C++ to modern web scripts like TypeScript and Python, we support over 50 ecosystems.</p>
+          <p className="font-body-md text-body-md text-on-surface-variant">Choose from the languages available in the workspace.</p>
         </div>
         <div className="bg-surface border border-outline-variant rounded-xl p-lg hover:border-primary transition-colors group">
           <div className="w-12 h-12 rounded-lg bg-surface-container border border-outline-variant flex items-center justify-center mb-md group-hover:bg-primary group-hover:bg-opacity-10 transition-colors">

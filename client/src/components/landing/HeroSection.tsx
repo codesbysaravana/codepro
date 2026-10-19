@@ -24,18 +24,22 @@ export default function HeroSection() {
         </div>
         <div className="grid grid-cols-3 gap-md pt-xl border-t border-outline-variant mt-md">
           <div>
-            <div className="font-headline-md text-headline-md text-on-surface">100K+</div>
-            <div className="font-label-md text-label-md text-on-surface-variant">Daily Executions</div>
+            <div className="font-headline-md text-headline-md text-on-surface">41,350</div>
+            <div className="font-label-md text-label-md text-on-surface-variant">Judge runs (all time)</div>
           </div>
           <div>
-            <div className="font-headline-md text-headline-md text-on-surface">50+</div>
-            <div className="font-label-md text-label-md text-on-surface-variant">Languages</div>
+            <div className="font-headline-md text-headline-md text-on-surface">16,220</div>
+            <div className="font-label-md text-label-md text-on-surface-variant">Submissions (all time)</div>
           </div>
           <div>
-            <div className="font-headline-md text-headline-md text-on-surface">99.9%</div>
-            <div className="font-label-md text-label-md text-on-surface-variant">Uptime</div>
+            <div className="font-headline-md text-headline-md text-on-surface">814</div>
+            <div className="font-label-md text-label-md text-on-surface-variant">Registered students</div>
           </div>
         </div>
+        <p className="font-label-md text-label-md text-on-surface-variant">
+          CodePro runs at St Joseph&apos;s as AetherCode. Production totals as of 19 October 2026.{' '}
+          <a href="https://grafana.stjosephsplacements.in/public-dashboards/b65e72b16769417c803e9001efa06da8" target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-4">View AetherCode metrics</a>
+        </p>
       </div>
       <div className="relative w-full rounded-xl border border-outline-variant bg-surface overflow-hidden shadow-2xl min-w-0">
         <div className="h-10 bg-surface-container-high border-b border-outline-variant flex items-center px-md gap-sm">
